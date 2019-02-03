@@ -1,0 +1,10 @@
+; -*- Hen -*-
+
+(
+ (synopsis "An I/O port that supports different endian formats.")
+ (license "GPL-3")
+ (category io)
+ (dependencies iset endian-blob)
+ (author "Ivan Raikov, partially reimplemented by Shawn Rutledge")
+ (components (extension endian-port))
+ )
