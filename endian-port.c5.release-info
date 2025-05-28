@@ -4,4 +4,5 @@
 (uri files-list "http://code.call-cc.org/files-list?egg={egg-name};egg-release={egg-release};chicken-release={chicken-release}" old-uri)
 
 (release "4.1")
+(release "4.0")
 
