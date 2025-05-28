@@ -1,8 +1,8 @@
-
 ;;
 ;; An I/O port that supports different endian formats.
+;; Extended with vector reading and writing capabilities.
 ;;
-;; Copyright 2005-2008, 2012-2019 Ivan Raikov, Shawn Rutledge
+;; Copyright 2005-2008, 2012-2025 Ivan Raikov, Shawn Rutledge
 ;; Ported to Chicken 4 by Shawn Rutledge s@ecloud.org
 ;;
 ;;
@@ -53,7 +53,23 @@
 	 write-ieee-float32
 	 write-ieee-float64
 	 write-bit-vector
-	 write-byte-vector)
+	 write-byte-vector
+	 read-int1-vector
+	 read-int2-vector
+	 read-int4-vector
+	 read-uint1-vector
+	 read-uint2-vector
+	 read-uint4-vector
+	 read-ieee-float32-vector
+	 read-ieee-float64-vector
+	 write-int1-vector
+	 write-int2-vector
+	 write-int4-vector
+	 write-uint1-vector
+	 write-uint2-vector
+	 write-uint4-vector
+	 write-ieee-float32-vector
+	 write-ieee-float64-vector)
 
         (import  scheme (chicken base) (chicken blob) (chicken port) (chicken bitwise)
                  (chicken file posix) iset srfi-4 endian-blob byte-blob)
@@ -92,24 +108,32 @@
   (file-close (endian-port-fileno eport)))
 
 ; Procedure:
-; open-endian-port MODE FILENAME -> ENDIAN-PORT
+; open-endian-port MODE FILENAME [WRITE-MODE] -> ENDIAN-PORT
 ;
 ; Opens an endian port to the specified file. Mode can be one of 'read
-; or 'write. In write mode, the file is created if it doesn't exist,
-; otherwise the new data is appended to its end. The default
-; endianness of the newly created endian port is MSB.
+; or 'write. For write mode, the optional WRITE-MODE parameter can be
+; 'truncate (default) to overwrite existing files, or 'append to add
+; to the end of existing files. The file is created if it doesn't exist.
+; The default endianness of the newly created endian port is MSB.
 ;
-(define (open-endian-port mode filename)
-  (cond ((eq? mode 'read)
-	 (let ((fd (file-open filename (bitwise-ior open/read open/binary))))
-	   (if (< fd 0)
-	       (error 'endian-port  "unable to open file: " filename)
-	       (make-endian-port fd filename MSB))))
-	(else
-	 (let ((fd (file-open filename (bitwise-ior open/append open/creat open/binary))))
-	   (if (< fd 0)
-	       (error 'endian-port  "unable to open file: " filename)
-	       (make-endian-port fd filename MSB))))))
+(define (open-endian-port mode filename . rest)
+  (let-optionals rest ((write-mode 'truncate))
+    (cond ((eq? mode 'read)
+	   (let ((fd (file-open filename (bitwise-ior open/read open/binary))))
+	     (if (< fd 0)
+	         (error 'endian-port  "unable to open file: " filename)
+	         (make-endian-port fd filename MSB))))
+	  (else
+	   (let ((flags (cond ((eq? write-mode 'append)
+			       (bitwise-ior open/write open/append open/creat open/binary))
+			      ((eq? write-mode 'truncate)
+			       (bitwise-ior open/write open/trunc open/creat open/binary))
+			      (else
+			       (error 'endian-port "invalid write-mode, must be 'append or 'truncate: " write-mode)))))
+	     (let ((fd (file-open filename flags)))
+	       (if (< fd 0)
+	           (error 'endian-port  "unable to open file: " filename)
+	           (make-endian-port fd filename MSB))))))))
 
 ; Procedure:
 ; port->endian-port:: PORT -> ENDIAN-PORT
@@ -375,6 +399,154 @@
 			     (u8vector->blob (list->u8vector data))))))))
 
 
+;------------------------------------
+;  Helper function for bulk I/O
+;
+
+; Procedure:
+; read-raw-bytes:: EPORT * COUNT -> BLOB | #f
+;
+; Reads COUNT bytes from the endian port and returns a blob, or #f if
+; the read fails or reaches EOF before reading all requested bytes.
+;
+(define (read-raw-bytes eport count)
+  (let* ([buf (make-blob count)]
+         [ret (file-read (endian-port-fileno eport) count buf)])
+    (and (= (cadr ret) count) (car ret))))
+
+; Procedure:
+; write-raw-bytes:: EPORT * BLOB -> INTEGER
+;
+; Writes the blob to the endian port and returns the number of bytes written.
+;
+(define (write-raw-bytes eport blob)
+  (file-write (endian-port-fileno eport) blob))
+
+
+;------------------------------------
+;  Vector Reading Operations
+;
+
+; Procedure:
+; read-uint1-vector:: EPORT * COUNT [* BYTE-ORDER] -> U8VECTOR | #f
+;
+; Reads a vector of unsigned integers of size 1 byte each. COUNT specifies
+; the number of elements to read. Returns a u8vector or #f if reading fails.
+; Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-uint1-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport count)])
+      (and raw-data
+           (endian-blob->u8vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-uint2-vector:: EPORT * COUNT [* BYTE-ORDER] -> U16VECTOR | #f
+;
+; Reads a vector of unsigned integers of size 2 bytes each. COUNT specifies
+; the number of elements to read. Returns a u16vector or #f if reading fails.
+; Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-uint2-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport (* count 2))])
+      (and raw-data
+           (endian-blob->u16vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-uint4-vector:: EPORT * COUNT [* BYTE-ORDER] -> U32VECTOR | #f
+;
+; Reads a vector of unsigned integers of size 4 bytes each. COUNT specifies
+; the number of elements to read. Returns a u32vector or #f if reading fails.
+; Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-uint4-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport (* count 4))])
+      (and raw-data
+           (endian-blob->u32vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-int1-vector:: EPORT * COUNT [* BYTE-ORDER] -> S8VECTOR | #f
+;
+; Reads a vector of signed integers of size 1 byte each. COUNT specifies
+; the number of elements to read. Returns a s8vector or #f if reading fails.
+; Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-int1-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport count)])
+      (and raw-data
+           (endian-blob->s8vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-int2-vector:: EPORT * COUNT [* BYTE-ORDER] -> S16VECTOR | #f
+;
+; Reads a vector of signed integers of size 2 bytes each. COUNT specifies
+; the number of elements to read. Returns a s16vector or #f if reading fails.
+; Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-int2-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport (* count 2))])
+      (and raw-data
+           (endian-blob->s16vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-int4-vector:: EPORT * COUNT [* BYTE-ORDER] -> S32VECTOR | #f
+;
+; Reads a vector of signed integers of size 4 bytes each. COUNT specifies
+; the number of elements to read. Returns a s32vector or #f if reading fails.
+; Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-int4-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport (* count 4))])
+      (and raw-data
+           (endian-blob->s32vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-ieee-float32-vector:: EPORT * COUNT [* BYTE-ORDER] -> F32VECTOR | #f
+;
+; Reads a vector of IEEE 754 single precision floating-point numbers.
+; COUNT specifies the number of elements to read. Returns a f32vector
+; or #f if reading fails. Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-ieee-float32-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport (* count 4))])
+      (and raw-data
+           (endian-blob->f32vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
+; Procedure:
+; read-ieee-float64-vector:: EPORT * COUNT [* BYTE-ORDER] -> F64VECTOR | #f
+;
+; Reads a vector of IEEE 754 double precision floating-point numbers.
+; COUNT specifies the number of elements to read. Returns a f64vector
+; or #f if reading fails. Optional argument BYTE-ORDER is one of MSB or LSB.
+;
+(define (read-ieee-float64-vector eport count . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let ([raw-data (read-raw-bytes eport (* count 8))])
+      (and raw-data
+           (endian-blob->f64vector
+            (byte-blob->endian-blob 
+             (blob->byte-blob raw-data) byte-order))))))
+
 
 ; Procedure:
 ; write-uint1:: EPORT * WORD [* BYTE-ORDER] -> UINTEGER
@@ -555,6 +727,129 @@
 						       (if (bit-vector-ref (- i 7) bv) #b10000000 0))))
 			       (loop (- i 8) (+ bytes (write-uint1 eport byte)))
 			       bytes)))))))
+
+;------------------------------------
+;  Vector Writing Operations
+;
+
+; Procedure:
+; write-uint1-vector:: EPORT * U8VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of unsigned integers of size 1 byte each. Returns the 
+; total number of bytes written. Optional argument BYTE-ORDER is one of
+; MSB or LSB. If byte order is not specified, then use the byte order
+; setting of the given endian port.
+;
+(define (write-uint1-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (u8vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-uint2-vector:: EPORT * U16VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of unsigned integers of size 2 bytes each. Returns the 
+; total number of bytes written. Optional argument BYTE-ORDER is one of
+; MSB or LSB. If byte order is not specified, then use the byte order
+; setting of the given endian port.
+;
+(define (write-uint2-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (u16vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-uint4-vector:: EPORT * U32VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of unsigned integers of size 4 bytes each. Returns the 
+; total number of bytes written. Optional argument BYTE-ORDER is one of
+; MSB or LSB. If byte order is not specified, then use the byte order
+; setting of the given endian port.
+;
+(define (write-uint4-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (u32vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-int1-vector:: EPORT * S8VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of signed integers of size 1 byte each. Returns the 
+; total number of bytes written. Optional argument BYTE-ORDER is one of
+; MSB or LSB. If byte order is not specified, then use the byte order
+; setting of the given endian port.
+;
+(define (write-int1-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (s8vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-int2-vector:: EPORT * S16VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of signed integers of size 2 bytes each. Returns the 
+; total number of bytes written. Optional argument BYTE-ORDER is one of
+; MSB or LSB. If byte order is not specified, then use the byte order
+; setting of the given endian port.
+;
+(define (write-int2-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (s16vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-int4-vector:: EPORT * S32VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of signed integers of size 4 bytes each. Returns the 
+; total number of bytes written. Optional argument BYTE-ORDER is one of
+; MSB or LSB. If byte order is not specified, then use the byte order
+; setting of the given endian port.
+;
+(define (write-int4-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (s32vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-ieee-float32-vector:: EPORT * F32VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of IEEE 754 single precision floating-point numbers.
+; Returns the total number of bytes written. Optional argument BYTE-ORDER
+; is one of MSB or LSB. If byte order is not specified, then use the byte
+; order setting of the given endian port.
+;
+(define (write-ieee-float32-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (f32vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
+; Procedure:
+; write-ieee-float64-vector:: EPORT * F64VECTOR [* BYTE-ORDER] -> INTEGER
+;
+; Writes a vector of IEEE 754 double precision floating-point numbers.
+; Returns the total number of bytes written. Optional argument BYTE-ORDER
+; is one of MSB or LSB. If byte order is not specified, then use the byte
+; order setting of the given endian port.
+;
+(define (write-ieee-float64-vector eport vect . rest)
+  (let-optionals rest ([byte-order (endian-port-byte-order eport)])
+    (let* ([endian-blob (f64vector->endian-blob vect byte-order)]
+           [byte-blob (endian-blob->byte-blob endian-blob)]
+           [raw-blob (byte-blob->blob byte-blob)])
+      (write-raw-bytes eport raw-blob))))
+
 ) ;; end of module
-
-
