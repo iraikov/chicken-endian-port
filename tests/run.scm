@@ -1,4 +1,8 @@
-(import scheme (chicken base) (chicken blob) srfi-4 endian-port endian-blob)
+(import scheme (chicken base) (chicken bytevector) (chicken number-vector)
+        iset byte-sequence endian-sequence endian-port)
+
+;; Tests for scalar operations
+(print "=== Testing Scalar Operations ===")
 
 ;; Tests for scalar operations
 (print "=== Testing Scalar Operations ===")
@@ -11,10 +15,13 @@
 	(write-int1 outp (inexact->exact (- (expt 2 7) 1)))
 	(write-int2 outp (inexact->exact (- (expt 2 15) 1)))
 	(write-int4 outp (inexact->exact (- (expt 2 30) 1)))
-	(write-byte-vector outp (string->blob "hacking endian-port"))
-	(write-byte-vector outp (blob->u8vector (string->blob "'error: bad argument count'")))
-	(write-byte-vector outp (u8vector->endian-blob (blob->u8vector (string->blob "always one more bug")) LSB))
-	(write-byte-vector outp (u8vector->endian-blob  (u8vector 255 254 128 127 126 125) LSB))
+	(write-int2 outp -2 LSB)
+	(write-uint4 outp 4000000000)
+	(write-byte-vector outp (string->utf8 "hacking endian-port"))
+	(write-byte-vector outp (string->byte-sequence "'error: bad argument count'"))
+	(write-byte-vector outp (u8vector->endian-sequence (string->utf8 "always one more bug") LSB))
+	(write-byte-vector outp (u8vector->endian-sequence (u8vector 255 254 128 127 126 125) LSB))
+	(write-byte-vector outp (string->utf8 "reversed") LSB)
 	(close-endian-port outp))
 
 (let ([inp (port->endian-port (open-input-file "eptest"))])
@@ -25,11 +32,47 @@
 	(print "trying to read " (- (expt 2 7) 1) ": "    (read-int1 inp))
 	(print "trying to read " (- (expt 2 15) 1) ": "  (read-int2 inp))
 	(print "trying to read " (- (expt 2 30) 1) ": "  (read-int4 inp))
-	(print "trying to read u8vector: " (blob->string (read-byte-vector inp 19)))
-	(print "trying to read u8vector: " (blob->string (read-byte-vector inp 27)))
-	(print "trying to read u8vector: " (blob->string (read-byte-vector inp 19)))
-	(print "trying to read u8vector of unsigned bytes: " (blob->u8vector (read-byte-vector inp 6)))
+	(print "trying to read -2 (LSB): "  (read-int2 inp LSB))
+	(print "trying to read 4000000000: "  (read-uint4 inp))
+	(print "trying to read u8vector: " (utf8->string (read-byte-vector inp 19)))
+	(print "trying to read u8vector: " (utf8->string (read-byte-vector inp 27)))
+	(print "trying to read u8vector: " (utf8->string (read-byte-vector inp 19)))
+	(print "trying to read u8vector of unsigned bytes: " (read-byte-vector inp 6))
+	(print "trying to read reversed bytes (LSB): " (utf8->string (read-byte-vector inp 8 LSB)))
+	(print "at end of file: " (eof? inp))
+	(print "reading past end returns: " (read-uint2 inp))
 	(close-endian-port inp))
+
+;; Tests for bit vectors
+(print "\n=== Testing Bit Vectors ===")
+
+(define (make-test-bit-vector size)
+  (let ((bv (make-bit-vector size)))
+    (do ((i 0 (+ i 1))) ((= i size) bv)
+      (if (zero? (modulo (* i 7) 3)) (bit-vector-set! bv i #t)))))
+
+(define (bit-vector=? a b)
+  (and (= (bit-vector-length a) (bit-vector-length b))
+       (let loop ((i 0))
+	 (or (= i (bit-vector-length a))
+	     (and (eq? (bit-vector-ref a i) (bit-vector-ref b i))
+		  (loop (+ i 1)))))))
+
+(for-each
+ (lambda (size)
+   (for-each
+    (lambda (order name)
+      (let ((bv (make-test-bit-vector size)))
+	(let ([outp (open-endian-port 'write "bitvector-test" 'truncate)])
+	  (print "Writing " size "-bit vector (" name "): "
+		 (write-bit-vector outp bv order size) " bytes")
+	  (close-endian-port outp))
+	(let ([inp (open-endian-port 'read "bitvector-test")])
+	  (print "Bit vector round trip (" size " bits, " name "): "
+		 (bit-vector=? bv (read-bit-vector inp size order)))
+	  (close-endian-port inp))))
+    (list MSB LSB) (list "MSB" "LSB")))
+ (list 1 8 13 32))
 
 ;; Tests for vector operations
 (print "\n=== Testing Vector Operations ===")

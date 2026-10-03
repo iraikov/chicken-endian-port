@@ -9,15 +9,18 @@ data in different endian formats (MSB/LSB) through a specialized port
 abstraction. The library supports both individual scalar values and
 efficient bulk vector operations for high-performance data processing.
 
-This library builds upon the
-[endian-blob](https://github.com/iraikov/chicken-endian-blob)
-library's efficient C-based endian conversion routines.
+This library builds upon the C-based endian conversion routines of
+the [endian-sequence](https://github.com/iraikov/chicken-endian-blob)
+library, and requires CHICKEN 6. Raw byte data is represented as
+bytevectors (which in CHICKEN 6 are the same as `u8vector`s).
 
 
 ## Requirements
 
-- [endian-blob](https://github.com/iraikov/chicken-endian-blob)
-- [iset](https://wiki.call-cc.org/eggref/5/iset)
+- CHICKEN 6
+- [endian-sequence](https://github.com/iraikov/chicken-endian-blob)
+- [byte-sequence](https://github.com/iraikov/chicken-byte-blob)
+- [iset](https://wiki.call-cc.org/eggref/6/iset)
 
 ## API
 
@@ -140,12 +143,18 @@ Read IEEE 754 single or double precision floating-point numbers. Returns the flo
 #### `(read-bit-vector eport size [byte-order])`
 **procedure**
 
-Reads a bit vector of the specified size (in bits). Returns an iset bit-vector.
+Reads a bit vector of the specified size (in bits). Returns an iset
+bit-vector, or `#f` on failure. Each byte holds a chunk of up to 8
+bits, with the lowest index of the chunk in the least significant bit.
+In LSB order the chunks are stored from the lowest index upward; in
+MSB order they are stored from the highest index downward.
 
 #### `(read-byte-vector eport size [byte-order])`
 **procedure**
 
-Reads an unsigned byte vector of the specified size. Returns a blob.
+Reads an unsigned byte vector of the specified size. Returns a
+bytevector, or `#f` on failure. In LSB order the bytes are returned in
+reverse file order.
 
 ### Scalar Writing Operations
 
@@ -169,15 +178,23 @@ Write unsigned integers of 1, 2, or 4 bytes respectively. Returns the number of 
 
 Write IEEE 754 single or double precision floating-point numbers. Returns the number of bytes written.
 
-#### `(write-bit-vector eport bit-vector [byte-order])`
+#### `(write-bit-vector eport bit-vector [byte-order [size]])`
 **procedure**
 
-Writes the given bit vector. Returns the number of bytes written.
+Writes the given bit vector in the layout read by `read-bit-vector`.
+Returns the number of bytes written. An iset bit vector does not
+record its size (`bit-vector-length` is one more than the index of the
+highest set bit), so the optional **size** argument gives the intended
+size in bits. It defaults to `bit-vector-length`. The MSB layout
+depends on the size, so pass the same size to `read-bit-vector`.
 
 #### `(write-byte-vector eport byte-vector [byte-order])`
 **procedure**
 
-Writes the given byte vector. Returns the number of bytes written.
+Writes the given byte vector, which may be a bytevector (`u8vector`),
+a byte sequence, or an endian sequence. The byte order recorded in an
+endian sequence is not used. In LSB order the bytes are written in
+reverse order. Returns the number of bytes written.
 
 ### Vector Reading Operations
 
@@ -250,17 +267,19 @@ Big-endian byte order constant.
 #### `LSB`
 Little-endian byte order constant.
 
+Both constants are re-exported from the endian-sequence module.
+
 ## Examples
 
 ### Basic Usage
 
 ```scheme
-(import endian-port srfi-4)
+(import (chicken format) endian-port)
 
 ;; Write some data
 (let ([port (open-endian-port 'write "test.dat")])
   (set-littlendian! port)
-  (write-uint4 port 0x12345678)
+  (write-uint4 port #x12345678)
   (write-ieee-float32 port 3.14159)
   (close-endian-port port))
 
@@ -276,7 +295,7 @@ Little-endian byte order constant.
 ### Vector Operations
 
 ```scheme
-(import endian-port srfi-4)
+(import (chicken format) (chicken number-vector) endian-port)
 
 ;; Generate test data
 (define sensor-data (make-f32vector 10000))
@@ -360,4 +379,6 @@ your option) any later version.
 
 ## See Also
 
-- [endian-blob](https://github.com/iraikov/chicken-endian-blob) - Endian-aware blob manipulation
+- [endian-sequence](https://github.com/iraikov/chicken-endian-blob) - Endian-aware byte sequence conversion
+- [byte-sequence](https://github.com/iraikov/chicken-byte-blob) - Byte sequence manipulation
+
